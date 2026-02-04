@@ -12,6 +12,7 @@ import { config as dotenvConfig } from 'dotenv';
 import { readFileSync, existsSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import { StorageFactory } from './storage.js';
 
 dotenvConfig();
 
@@ -32,6 +33,12 @@ try {
   process.exit(1);
 }
 
+// Initialize storage backend from config
+const storage = StorageFactory.create(
+  config.storage?.backend || 'memory',
+  { path: config.storage?.path }
+);
+
 // OpenClaw API endpoint
 const OPENCLAW_URL = process.env.OPENCLAW_URL || 'http://localhost:18789/v1/chat/completions';
 const OPENCLAW_TOKEN = process.env.OPENCLAW_TOKEN || '';
@@ -46,9 +53,8 @@ const client = new Client({
   ],
 });
 
-// Conversation history per channel (simple in-memory store)
-const conversationHistory = new Map();
-const MAX_HISTORY = 20;
+// Max history from config (used for getHistory limit)
+const MAX_HISTORY = config.storage?.maxHistory || 20;
 
 // Spam patterns
 const SPAM_PATTERNS = [
