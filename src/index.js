@@ -7,11 +7,12 @@
  * - Spam/scam detection and moderation
  */
 
-import { Client, GatewayIntentBits, EmbedBuilder, ChannelType } from 'discord.js';
+import { Client, GatewayIntentBits, EmbedBuilder, ChannelType, REST, Routes } from 'discord.js';
 import { config as dotenvConfig } from 'dotenv';
 import { readFileSync, existsSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import { commandData } from './commands.js';
 
 dotenvConfig();
 
@@ -148,7 +149,7 @@ You can use Discord markdown formatting.`;
  */
 async function sendSpamAlert(message) {
   if (!config.moderation?.alertChannelId) return;
-  
+
   const alertChannel = await client.channels.fetch(config.moderation.alertChannelId).catch(() => null);
   if (!alertChannel) return;
 
@@ -164,18 +165,53 @@ async function sendSpamAlert(message) {
     .setTimestamp();
 
   await alertChannel.send({ embeds: [embed] });
-  
+
   // Auto-delete if enabled
   if (config.moderation?.autoDelete) {
     await message.delete().catch(() => {});
   }
 }
 
+/**
+ * Register slash commands with Discord
+ */
+async function deployCommands() {
+  const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
+
+  try {
+    const clientId = process.env.DISCORD_CLIENT_ID;
+    const guildId = process.env.DISCORD_GUILD_ID;
+
+    if (!clientId) {
+      throw new Error('DISCORD_CLIENT_ID not set');
+    }
+
+    if (guildId) {
+      // Register commands for a specific guild (faster for development)
+      await rest.put(Routes.applicationGuildCommands(clientId, guildId), {
+        body: commandData,
+      });
+      console.log(`✅ Commands registered for guild ${guildId}`);
+    } else {
+      // Register commands globally (takes up to 1 hour to propagate)
+      await rest.put(Routes.applicationCommands(clientId), {
+        body: commandData,
+      });
+      console.log('✅ Commands registered globally');
+    }
+  } catch (err) {
+    console.error('Failed to register commands:', err.message);
+  }
+}
+
 // Bot ready
-client.once('ready', () => {
+client.once('ready', async () => {
   console.log(`✅ ${client.user.tag} is online!`);
   console.log(`📡 Serving ${client.guilds.cache.size} server(s)`);
-  
+
+  // Register slash commands
+  await deployCommands();
+
   if (config.welcome?.enabled) {
     console.log(`👋 Welcome messages → #${config.welcome.channelId}`);
   }
