@@ -5,3 +5,8 @@ logs/
 
 # Auto Claude data directory
 .auto-claude/
+
+# Auto Claude config/state files (local development)
+.auto-claude-security.json
+.auto-claude-status
+.claude_settings.json
