@@ -5,7 +5,7 @@
  * Admin mode (detailed: true) shows additional diagnostics
  */
 
-import { EmbedBuilder } from 'discord.js';
+import { EmbedBuilder, PermissionFlagsBits } from 'discord.js';
 import { HealthMonitor } from '../utils/health.js';
 
 /**
@@ -50,7 +50,7 @@ export async function execute(interaction) {
 
     if (detailed) {
       // Check if user has admin permissions
-      if (!interaction.member?.permissions.has('Administrator')) {
+      if (!interaction.memberPermissions?.has(PermissionFlagsBits.Administrator)) {
         await interaction.reply({
           content: '❌ Detailed diagnostics are only available to administrators.',
           ephemeral: true
