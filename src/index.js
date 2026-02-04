@@ -12,6 +12,7 @@ import { config as dotenvConfig } from 'dotenv';
 import { readFileSync, existsSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import { info, error } from './logger.js';
 
 dotenvConfig();
 
@@ -22,13 +23,13 @@ const configPath = join(__dirname, '..', 'config.json');
 let config;
 try {
   if (!existsSync(configPath)) {
-    console.error('❌ config.json not found!');
+    error('config.json not found!');
     process.exit(1);
   }
   config = JSON.parse(readFileSync(configPath, 'utf-8'));
-  console.log('✅ Loaded config.json');
+  info('Loaded config.json');
 } catch (err) {
-  console.error('❌ Failed to load config.json:', err.message);
+  error('Failed to load config.json', { error: err.message });
   process.exit(1);
 }
 
