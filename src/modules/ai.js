@@ -16,7 +16,7 @@ const OPENCLAW_TOKEN = process.env.OPENCLAW_TOKEN || '';
  * @param {string} channelId - Channel ID
  * @returns {Array} Conversation history
  */
-function getHistory(channelId) {
+export function getHistory(channelId) {
   if (!conversationHistory.has(channelId)) {
     conversationHistory.set(channelId, []);
   }
@@ -29,7 +29,7 @@ function getHistory(channelId) {
  * @param {string} role - Message role (user/assistant)
  * @param {string} content - Message content
  */
-function addToHistory(channelId, role, content) {
+export function addToHistory(channelId, role, content) {
   const history = getHistory(channelId);
   history.push({ role, content });
 
