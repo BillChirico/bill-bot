@@ -200,6 +200,74 @@ function addToHistory(channelId, role, content) {
 }
 
 /**
+ * Split message while preserving code blocks
+ * Returns array of message chunks that respect code block boundaries
+ */
+function splitMessageSafely(text, maxLength = 2000) {
+  if (text.length <= maxLength) {
+    return [text];
+  }
+
+  const chunks = [];
+  let currentChunk = '';
+  let inCodeBlock = false;
+  let codeBlockLanguage = null;
+
+  const lines = text.split('\n');
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const lineWithNewline = (i < lines.length - 1) ? line + '\n' : line;
+
+    // Detect code block boundaries
+    if (line.startsWith('```')) {
+      if (inCodeBlock) {
+        // Closing code block
+        inCodeBlock = false;
+        codeBlockLanguage = null;
+      } else {
+        // Opening code block
+        inCodeBlock = true;
+        const match = line.match(/^```(\w+)?/);
+        codeBlockLanguage = match?.[1] || null;
+      }
+    }
+
+    // Check if adding this line would exceed limit
+    const potentialLength = currentChunk.length + lineWithNewline.length;
+
+    if (potentialLength > maxLength - 10) { // -10 for safety margin and potential code block markers
+      // If we're in a code block, close it before splitting
+      if (inCodeBlock) {
+        currentChunk += '```\n';
+        chunks.push(currentChunk);
+        // Start new chunk with code block
+        currentChunk = '```' + (codeBlockLanguage || '') + '\n' + lineWithNewline;
+      } else {
+        // Not in code block, safe to split
+        if (currentChunk.trim()) {
+          chunks.push(currentChunk);
+        }
+        currentChunk = lineWithNewline;
+      }
+    } else {
+      currentChunk += lineWithNewline;
+    }
+  }
+
+  // Add remaining content
+  if (currentChunk.trim()) {
+    // Close any open code block
+    if (inCodeBlock) {
+      currentChunk += '```';
+    }
+    chunks.push(currentChunk);
+  }
+
+  return chunks;
+}
+
+/**
  * Generate AI response using OpenClaw's chat completions endpoint
  */
 async function generateResponse(channelId, userMessage, username) {
@@ -355,11 +423,15 @@ client.on('messageCreate', async (message) => {
         message.author.username
       );
 
-      // Split long responses
+      // Split long responses while preserving code blocks
       if (response.length > 2000) {
-        const chunks = response.match(/[\s\S]{1,1990}/g) || [];
-        for (const chunk of chunks) {
-          await message.channel.send(chunk);
+        const chunks = splitMessageSafely(response, 2000);
+        for (let i = 0; i < chunks.length; i++) {
+          if (i === 0) {
+            await message.reply(chunks[i]);
+          } else {
+            await message.channel.send(chunks[i]);
+          }
         }
       } else {
         await message.reply(response);
