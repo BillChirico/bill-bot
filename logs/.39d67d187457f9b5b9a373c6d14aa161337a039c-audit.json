@@ -1,0 +1,15 @@
+{
+    "keep": {
+        "days": true,
+        "amount": 14
+    },
+    "auditLog": "/Users/billchirico/Developer/bill-bot/.auto-claude/worktrees/tasks/006-structured-logging-system/logs/.39d67d187457f9b5b9a373c6d14aa161337a039c-audit.json",
+    "files": [
+        {
+            "date": 1770168367407,
+            "name": "/Users/billchirico/Developer/bill-bot/.auto-claude/worktrees/tasks/006-structured-logging-system/logs/combined-2026-02-03.log",
+            "hash": "6bc96e0283bfb7b30a02c716a5fe92ad909e9a315351a213ec03ef55bd590486"
+        }
+    ],
+    "hashType": "sha256"
+}

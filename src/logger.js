@@ -89,6 +89,21 @@ if (fileOutputEnabled) {
       )
     })
   );
+
+  // Separate transport for error-level logs only
+  transports.push(
+    new DailyRotateFile({
+      level: 'error',
+      filename: join(logsDir, 'error-%DATE%.log'),
+      datePattern: 'YYYY-MM-DD',
+      maxSize: '20m',
+      maxFiles: '14d',
+      format: winston.format.combine(
+        winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
+        winston.format.json()
+      )
+    })
+  );
 }
 
 const logger = winston.createLogger({
