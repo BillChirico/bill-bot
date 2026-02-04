@@ -330,6 +330,38 @@ client.on('interactionCreate', async (interaction) => {
       } else {
         await interaction.editReply(response);
       }
+    } else if (commandName === 'help') {
+      // Create help embed with all available commands
+      const embed = new EmbedBuilder()
+        .setColor(0x5865F2)
+        .setTitle('🤖 Bill Bot - Available Commands')
+        .setDescription('Here are all the commands you can use:')
+        .addFields(
+          {
+            name: '/ask',
+            value: 'Ask the AI a question\n**Usage:** `/ask question: What is JavaScript?`'
+          },
+          {
+            name: '/help',
+            value: 'Show this help message\n**Usage:** `/help`'
+          },
+          {
+            name: '/clear',
+            value: 'Clear your conversation history with the bot\n**Usage:** `/clear`'
+          },
+          {
+            name: '/status',
+            value: 'Show bot status, uptime, and health information\n**Usage:** `/status`'
+          }
+        )
+        .addFields({
+          name: '💬 AI Chat',
+          value: 'You can also mention me or reply to my messages to chat! I remember the last 20 messages per channel.'
+        })
+        .setFooter({ text: 'Powered by Claude AI via OpenClaw' })
+        .setTimestamp();
+
+      await interaction.reply({ embeds: [embed] });
     }
   } catch (err) {
     console.error(`Error handling /${commandName}:`, err.message);
