@@ -14,7 +14,7 @@ import { generateResponse } from './ai.js';
  * @param {Object} healthMonitor - Health monitor instance
  */
 export function registerReadyHandler(client, config, healthMonitor) {
-  client.once('ready', () => {
+  client.once('clientReady', () => {
     console.log(`✅ ${client.user.tag} is online!`);
     console.log(`📡 Serving ${client.guilds.cache.size} server(s)`);
 

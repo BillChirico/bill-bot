@@ -142,7 +142,7 @@ async function loadCommands() {
 registerEventHandlers(client, config, healthMonitor);
 
 // Extend ready handler to register slash commands
-client.once('ready', async () => {
+client.once('clientReady', async () => {
   // Register slash commands with Discord
   try {
     const commands = Array.from(client.commands.values());
