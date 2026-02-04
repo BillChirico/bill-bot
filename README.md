@@ -76,7 +76,7 @@ AI-powered Discord bot for the Volvox community.
 
 ## Commands
 
-- **`/clear`** - Clears your conversation history with the AI (user mode only)
+- **`/clear`** - Clears conversation history with the AI
 
 ## Architecture
 
