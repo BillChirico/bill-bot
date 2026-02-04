@@ -1,43 +1,42 @@
 /**
  * Bill Bot - Volvox Discord Bot
- * 
+ * Main entry point - orchestrates modules
+ *
  * Features:
  * - AI chat powered by Claude
  * - Welcome messages for new members
  * - Spam/scam detection and moderation
+ * - Health monitoring and status command
+ * - Graceful shutdown handling
  */
 
-import { Client, GatewayIntentBits, EmbedBuilder, ChannelType } from 'discord.js';
+import { Client, GatewayIntentBits, Collection } from 'discord.js';
 import { config as dotenvConfig } from 'dotenv';
-import { readFileSync, writeFileSync, existsSync } from 'fs';
+import { readdirSync, writeFileSync, readFileSync, existsSync, mkdirSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import { loadConfig } from './modules/config.js';
+import { registerEventHandlers } from './modules/events.js';
+import { HealthMonitor } from './utils/health.js';
+import { registerCommands } from './utils/registerCommands.js';
+import { hasPermission, getPermissionError } from './utils/permissions.js';
+import { getConversationHistory, setConversationHistory } from './modules/ai.js';
 
+// ES module dirname equivalent
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+// State persistence path
+const dataDir = join(__dirname, '..', 'data');
+const statePath = join(dataDir, 'state.json');
+
+// Load environment variables
 dotenvConfig();
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const configPath = join(__dirname, '..', 'config.json');
-const statePath = join(__dirname, '..', 'data', 'state.json');
+// Load configuration
+const config = loadConfig();
 
-// Load config
-let config;
-try {
-  if (!existsSync(configPath)) {
-    console.error('❌ config.json not found!');
-    process.exit(1);
-  }
-  config = JSON.parse(readFileSync(configPath, 'utf-8'));
-  console.log('✅ Loaded config.json');
-} catch (err) {
-  console.error('❌ Failed to load config.json:', err.message);
-  process.exit(1);
-}
-
-// OpenClaw API endpoint
-const OPENCLAW_URL = process.env.OPENCLAW_URL || 'http://localhost:18789/v1/chat/completions';
-const OPENCLAW_TOKEN = process.env.OPENCLAW_TOKEN || '';
-
-// Initialize Discord client
+// Initialize Discord client with required intents
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -47,54 +46,31 @@ const client = new Client({
   ],
 });
 
-// Conversation history per channel (simple in-memory store)
-const conversationHistory = new Map();
-const MAX_HISTORY = 20;
+// Initialize command collection
+client.commands = new Collection();
+
+// Initialize health monitor
+const healthMonitor = HealthMonitor.getInstance();
 
 // Track pending AI requests for graceful shutdown
 const pendingRequests = new Set();
 
-// Spam patterns
-const SPAM_PATTERNS = [
-  /free\s*(crypto|bitcoin|btc|eth|nft)/i,
-  /airdrop.*claim/i,
-  /discord\s*nitro\s*free/i,
-  /nitro\s*gift.*claim/i,
-  /click.*verify.*account/i,
-  /guaranteed.*profit/i,
-  /invest.*double.*money/i,
-  /dm\s*me\s*for.*free/i,
-  /make\s*\$?\d+k?\+?\s*(daily|weekly|monthly)/i,
-];
-
 /**
- * Check if message is spam
+ * Register a pending request for tracking
+ * @returns {Symbol} Request ID to use for cleanup
  */
-function isSpam(content) {
-  return SPAM_PATTERNS.some(pattern => pattern.test(content));
+export function registerPendingRequest() {
+  const requestId = Symbol('request');
+  pendingRequests.add(requestId);
+  return requestId;
 }
 
 /**
- * Get or create conversation history for a channel
+ * Remove a pending request from tracking
+ * @param {Symbol} requestId - Request ID to remove
  */
-function getHistory(channelId) {
-  if (!conversationHistory.has(channelId)) {
-    conversationHistory.set(channelId, []);
-  }
-  return conversationHistory.get(channelId);
-}
-
-/**
- * Add message to history
- */
-function addToHistory(channelId, role, content) {
-  const history = getHistory(channelId);
-  history.push({ role, content });
-
-  // Trim old messages
-  while (history.length > MAX_HISTORY) {
-    history.shift();
-  }
+export function removePendingRequest(requestId) {
+  pendingRequests.delete(requestId);
 }
 
 /**
@@ -102,11 +78,18 @@ function addToHistory(channelId, role, content) {
  */
 function saveState() {
   try {
+    // Ensure data directory exists
+    if (!existsSync(dataDir)) {
+      mkdirSync(dataDir, { recursive: true });
+    }
+
+    const conversationHistory = getConversationHistory();
     const stateData = {
       conversationHistory: Array.from(conversationHistory.entries()),
       timestamp: new Date().toISOString(),
     };
     writeFileSync(statePath, JSON.stringify(stateData, null, 2), 'utf-8');
+    console.log('💾 State saved successfully');
   } catch (err) {
     console.error('❌ Failed to save state:', err.message);
   }
@@ -122,10 +105,8 @@ function loadState() {
     }
     const stateData = JSON.parse(readFileSync(statePath, 'utf-8'));
     if (stateData.conversationHistory) {
-      conversationHistory.clear();
-      for (const [channelId, history] of stateData.conversationHistory) {
-        conversationHistory.set(channelId, history);
-      }
+      setConversationHistory(new Map(stateData.conversationHistory));
+      console.log('📂 State loaded successfully');
     }
   } catch (err) {
     console.error('❌ Failed to load state:', err.message);
@@ -133,194 +114,99 @@ function loadState() {
 }
 
 /**
- * Generate AI response using OpenClaw's chat completions endpoint
+ * Load all commands from the commands directory
  */
-async function generateResponse(channelId, userMessage, username) {
-  // Track this request for graceful shutdown
-  const requestId = Symbol('request');
-  pendingRequests.add(requestId);
+async function loadCommands() {
+  const commandsPath = join(__dirname, 'commands');
+  const commandFiles = readdirSync(commandsPath).filter(file => file.endsWith('.js'));
 
-  try {
-    const history = getHistory(channelId);
-
-    const systemPrompt = config.ai?.systemPrompt || `You are Volvox Bot, a helpful and friendly Discord bot for the Volvox developer community.
-You're witty, knowledgeable about programming and tech, and always eager to help.
-Keep responses concise and Discord-friendly (under 2000 chars).
-You can use Discord markdown formatting.`;
-
-    // Build messages array for OpenAI-compatible API
-    const messages = [
-      { role: 'system', content: systemPrompt },
-      ...history,
-      { role: 'user', content: `${username}: ${userMessage}` }
-    ];
-
+  for (const file of commandFiles) {
+    const filePath = join(commandsPath, file);
     try {
-      const response = await fetch(OPENCLAW_URL, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(OPENCLAW_TOKEN && { 'Authorization': `Bearer ${OPENCLAW_TOKEN}` })
-        },
-        body: JSON.stringify({
-          model: config.ai?.model || 'claude-sonnet-4-20250514',
-          max_tokens: config.ai?.maxTokens || 1024,
-          messages: messages,
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error(`API error: ${response.status} ${response.statusText}`);
+      const command = await import(filePath);
+      if (command.data && command.execute) {
+        client.commands.set(command.data.name, command);
+        console.log(`✅ Loaded command: ${command.data.name}`);
+      } else {
+        console.warn(`⚠️ Command ${file} missing data or execute export`);
       }
-
-      const data = await response.json();
-      const reply = data.choices?.[0]?.message?.content || "I got nothing. Try again?";
-
-      // Update history
-      addToHistory(channelId, 'user', `${username}: ${userMessage}`);
-      addToHistory(channelId, 'assistant', reply);
-
-      return reply;
     } catch (err) {
-      console.error('OpenClaw API error:', err.message);
-      return "Sorry, I'm having trouble thinking right now. Try again in a moment!";
+      console.error(`❌ Failed to load command ${file}:`, err.message);
     }
-  } finally {
-    // Remove request from tracking
-    pendingRequests.delete(requestId);
   }
 }
 
-/**
- * Send alert for spam detection
- */
-async function sendSpamAlert(message) {
-  if (!config.moderation?.alertChannelId) return;
-  
-  const alertChannel = await client.channels.fetch(config.moderation.alertChannelId).catch(() => null);
-  if (!alertChannel) return;
+// Register all event handlers
+registerEventHandlers(client, config, healthMonitor);
 
-  const embed = new EmbedBuilder()
-    .setColor(0xFF6B6B)
-    .setTitle('⚠️ Potential Spam Detected')
-    .addFields(
-      { name: 'Author', value: `<@${message.author.id}>`, inline: true },
-      { name: 'Channel', value: `<#${message.channel.id}>`, inline: true },
-      { name: 'Content', value: message.content.slice(0, 1000) || '*empty*' },
-      { name: 'Link', value: `[Jump](${message.url})` }
-    )
-    .setTimestamp();
+// Extend ready handler to register slash commands
+client.once('ready', async () => {
+  // Register slash commands with Discord
+  try {
+    const commands = Array.from(client.commands.values());
+    const guildId = process.env.GUILD_ID || null;
 
-  await alertChannel.send({ embeds: [embed] });
-  
-  // Auto-delete if enabled
-  if (config.moderation?.autoDelete) {
-    await message.delete().catch(() => {});
-  }
-}
-
-// Bot ready
-client.once('ready', () => {
-  console.log(`✅ ${client.user.tag} is online!`);
-  console.log(`📡 Serving ${client.guilds.cache.size} server(s)`);
-  
-  if (config.welcome?.enabled) {
-    console.log(`👋 Welcome messages → #${config.welcome.channelId}`);
-  }
-  if (config.ai?.enabled) {
-    console.log(`🤖 AI chat enabled (${config.ai.model || 'claude-sonnet-4-20250514'})`);
-  }
-  if (config.moderation?.enabled) {
-    console.log(`🛡️ Moderation enabled`);
+    await registerCommands(
+      commands,
+      client.user.id,
+      process.env.DISCORD_TOKEN,
+      guildId
+    );
+  } catch (err) {
+    console.error('Command registration failed:', err.message);
   }
 });
 
-// Welcome new members
-client.on('guildMemberAdd', async (member) => {
-  if (!config.welcome?.enabled || !config.welcome?.channelId) return;
+// Handle slash commands
+client.on('interactionCreate', async (interaction) => {
+  if (!interaction.isChatInputCommand()) return;
+
+  const { commandName, member } = interaction;
 
   try {
-    const channel = await client.channels.fetch(config.welcome.channelId);
-    if (!channel) return;
+    console.log(`[INTERACTION] /${commandName} from ${interaction.user.tag}`);
 
-    const message = (config.welcome.message || 'Welcome, {user}!')
-      .replace(/{user}/g, `<@${member.id}>`)
-      .replace(/{username}/g, member.user.username)
-      .replace(/{server}/g, member.guild.name)
-      .replace(/{memberCount}/g, member.guild.memberCount.toString());
+    // Permission check
+    if (!hasPermission(member, commandName, config)) {
+      await interaction.reply({
+        content: getPermissionError(commandName),
+        ephemeral: true
+      });
+      console.log(`[DENIED] ${interaction.user.tag} attempted /${commandName}`);
+      return;
+    }
 
-    await channel.send(message);
-    console.log(`[WELCOME] ${member.user.tag} joined ${member.guild.name}`);
+    // Execute command from collection
+    const command = client.commands.get(commandName);
+    if (!command) {
+      await interaction.reply({
+        content: '❌ Command not found.',
+        ephemeral: true
+      });
+      return;
+    }
+
+    await command.execute(interaction);
+    console.log(`[CMD] ${interaction.user.tag} used /${commandName}`);
   } catch (err) {
-    console.error('Welcome error:', err.message);
-  }
-});
+    console.error(`Command error (/${commandName}):`, err.message);
 
-// Handle messages
-client.on('messageCreate', async (message) => {
-  // Ignore bots and DMs
-  if (message.author.bot) return;
-  if (!message.guild) return;
+    const errorMessage = {
+      content: '❌ An error occurred while executing this command.',
+      ephemeral: true
+    };
 
-  // Spam detection
-  if (config.moderation?.enabled && isSpam(message.content)) {
-    console.log(`[SPAM] ${message.author.tag}: ${message.content.slice(0, 50)}...`);
-    await sendSpamAlert(message);
-    return;
-  }
-
-  // AI chat - respond when mentioned
-  if (config.ai?.enabled) {
-    const isMentioned = message.mentions.has(client.user);
-    const isReply = message.reference && message.mentions.repliedUser?.id === client.user.id;
-    
-    // Check if in allowed channel (if configured)
-    const allowedChannels = config.ai?.channels || [];
-    const isAllowedChannel = allowedChannels.length === 0 || allowedChannels.includes(message.channel.id);
-    
-    if ((isMentioned || isReply) && isAllowedChannel) {
-      // Remove the mention from the message
-      const cleanContent = message.content
-        .replace(new RegExp(`<@!?${client.user.id}>`, 'g'), '')
-        .trim();
-      
-      if (!cleanContent) {
-        await message.reply("Hey! What's up?");
-        return;
-      }
-
-      await message.channel.sendTyping();
-      
-      const response = await generateResponse(
-        message.channel.id,
-        cleanContent,
-        message.author.username
-      );
-
-      // Split long responses
-      if (response.length > 2000) {
-        const chunks = response.match(/[\s\S]{1,1990}/g) || [];
-        for (const chunk of chunks) {
-          await message.channel.send(chunk);
-        }
-      } else {
-        await message.reply(response);
-      }
+    if (interaction.replied || interaction.deferred) {
+      await interaction.followUp(errorMessage).catch(() => {});
+    } else {
+      await interaction.reply(errorMessage).catch(() => {});
     }
   }
-});
-
-// Error handling
-client.on('error', (error) => {
-  console.error('Discord error:', error);
-});
-
-process.on('unhandledRejection', (error) => {
-  console.error('Unhandled rejection:', error);
 });
 
 /**
  * Graceful shutdown handler
+ * @param {string} signal - Signal that triggered shutdown
  */
 async function gracefulShutdown(signal) {
   console.log(`\n🛑 Received ${signal}, shutting down gracefully...`);
@@ -359,16 +245,20 @@ async function gracefulShutdown(signal) {
 process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
-// Start
+// Start bot
 const token = process.env.DISCORD_TOKEN;
 if (!token) {
   console.error('❌ DISCORD_TOKEN not set');
   process.exit(1);
 }
 
-console.log(`🔗 Using OpenClaw API at ${OPENCLAW_URL}`);
-
 // Load previous state on startup
 loadState();
 
-client.login(token);
+// Load commands and login
+loadCommands()
+  .then(() => client.login(token))
+  .catch((err) => {
+    console.error('❌ Startup failed:', err.message);
+    process.exit(1);
+  });
