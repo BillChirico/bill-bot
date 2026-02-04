@@ -6,6 +6,8 @@
  */
 
 import Database from 'better-sqlite3';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync } from 'fs';
+import { join } from 'path';
 
 /**
  * Base Storage class - defines the interface all storage backends must implement
@@ -170,6 +172,107 @@ export class SQLiteStorage extends Storage {
 }
 
 /**
+ * JSON Storage - persistent storage using one JSON file per channel
+ * Each channel's messages are stored in {dataDir}/{channelId}.json
+ */
+export class JSONStorage extends Storage {
+  /**
+   * Create JSON storage instance
+   * @param {string} dataDir - Directory to store JSON files
+   */
+  constructor(dataDir = './data') {
+    super();
+    this.dataDir = dataDir;
+    this._ensureDirectory();
+  }
+
+  /**
+   * Ensure data directory exists
+   * @private
+   */
+  _ensureDirectory() {
+    if (!existsSync(this.dataDir)) {
+      mkdirSync(this.dataDir, { recursive: true });
+    }
+  }
+
+  /**
+   * Get file path for a channel
+   * @private
+   */
+  _getChannelPath(channelId) {
+    return join(this.dataDir, `${channelId}.json`);
+  }
+
+  /**
+   * Read messages from channel file
+   * @private
+   */
+  _readChannel(channelId) {
+    const filePath = this._getChannelPath(channelId);
+    if (!existsSync(filePath)) {
+      return [];
+    }
+
+    try {
+      const data = readFileSync(filePath, 'utf-8');
+      return JSON.parse(data);
+    } catch (err) {
+      return [];
+    }
+  }
+
+  /**
+   * Write messages to channel file
+   * @private
+   */
+  _writeChannel(channelId, messages) {
+    const filePath = this._getChannelPath(channelId);
+    writeFileSync(filePath, JSON.stringify(messages, null, 2), 'utf-8');
+  }
+
+  async getHistory(channelId, limit = 20) {
+    const messages = this._readChannel(channelId);
+    return messages.slice(-limit);
+  }
+
+  async addMessage(channelId, role, content) {
+    const messages = this._readChannel(channelId);
+    messages.push({
+      role,
+      content,
+      timestamp: Date.now()
+    });
+    this._writeChannel(channelId, messages);
+  }
+
+  async pruneOldMessages(daysOld) {
+    const cutoff = Date.now() - (daysOld * 24 * 60 * 60 * 1000);
+    let deleted = 0;
+
+    if (!existsSync(this.dataDir)) {
+      return 0;
+    }
+
+    const files = readdirSync(this.dataDir).filter(f => f.endsWith('.json'));
+
+    for (const file of files) {
+      const channelId = file.replace('.json', '');
+      const messages = this._readChannel(channelId);
+      const originalLength = messages.length;
+      const filtered = messages.filter(msg => msg.timestamp >= cutoff);
+
+      if (filtered.length !== originalLength) {
+        this._writeChannel(channelId, filtered);
+        deleted += originalLength - filtered.length;
+      }
+    }
+
+    return deleted;
+  }
+}
+
+/**
  * Storage Factory - creates appropriate storage backend based on configuration
  */
 export class StorageFactory {
@@ -188,8 +291,7 @@ export class StorageFactory {
         return new SQLiteStorage(options.path || './data/conversations.db');
 
       case 'json':
-        // JSON backend will be implemented in subtask after SQLite
-        throw new Error('JSON storage not yet implemented');
+        return new JSONStorage(options.path || './data');
 
       default:
         throw new Error(`Unknown storage backend: ${backend}`);
