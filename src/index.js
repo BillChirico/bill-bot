@@ -300,12 +300,48 @@ client.on('messageCreate', async (message) => {
 
 // Handle slash command interactions
 client.on('interactionCreate', async (interaction) => {
-  console.log('Received interaction');
-
   // Only handle slash commands
   if (!interaction.isChatInputCommand()) return;
 
-  // Command handling will be implemented in subsequent subtasks
+  const { commandName } = interaction;
+
+  try {
+    if (commandName === 'ask') {
+      // Get the question from command options
+      const question = interaction.options.getString('question');
+
+      // Defer reply since AI generation might take time
+      await interaction.deferReply();
+
+      // Generate AI response
+      const response = await generateResponse(
+        interaction.channel.id,
+        question,
+        interaction.user.username
+      );
+
+      // Send response (handle long messages)
+      if (response.length > 2000) {
+        const chunks = response.match(/[\s\S]{1,1990}/g) || [];
+        await interaction.editReply(chunks[0]);
+        for (let i = 1; i < chunks.length; i++) {
+          await interaction.followUp(chunks[i]);
+        }
+      } else {
+        await interaction.editReply(response);
+      }
+    }
+  } catch (err) {
+    console.error(`Error handling /${commandName}:`, err.message);
+
+    const errorMessage = 'Sorry, something went wrong processing your command!';
+
+    if (interaction.deferred) {
+      await interaction.editReply(errorMessage).catch(() => {});
+    } else {
+      await interaction.reply({ content: errorMessage, ephemeral: true }).catch(() => {});
+    }
+  }
 });
 
 // Error handling
