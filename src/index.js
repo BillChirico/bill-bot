@@ -107,6 +107,76 @@ function detectcode(content) {
 }
 
 /**
+ * Detect programming language from code content
+ * Returns detected language string or null if unknown
+ */
+function detectlanguage(code) {
+  if (!code || typeof code !== 'string') return null;
+
+  const content = code.trim();
+  if (content.length === 0) return null;
+
+  // Language patterns with priority order
+  const patterns = [
+    // Markup/Config (check first as they're most distinctive)
+    { lang: 'json', regex: /^\s*[\[{][\s\S]*[}\]]\s*$/, score: 0 },
+    { lang: 'xml', regex: /<\?xml|<\/\w+>|<\w+[^>]*\/?>/, score: 0 },
+    { lang: 'html', regex: /<!DOCTYPE html|<html|<head>|<body>|<div/i, score: 0 },
+    { lang: 'css', regex: /^[.\w#][\w-]*\s*\{|@media|@import/, score: 0 },
+    { lang: 'yaml', regex: /^[\w-]+:\s*$|^\s*-\s+[\w-]+:/m, score: 0 },
+
+    // Shell scripts
+    { lang: 'bash', regex: /^#!\/bin\/(ba)?sh|^\s*(export|echo|if\s+\[|\bsudo\b)/, score: 0 },
+
+    // Python
+    { lang: 'python', regex: /\bdef\s+\w+\(|^\s*import\s+\w+|^\s*from\s+\w+\s+import|\bprint\(|if __name__/, score: 0 },
+
+    // JavaScript/TypeScript
+    { lang: 'typescript', regex: /:\s*(string|number|boolean|any)\s*[;=)]|interface\s+\w+|type\s+\w+\s*=/, score: 0 },
+    { lang: 'javascript', regex: /\b(const|let|var)\s+\w+|function\s*\w*\s*\(|=>\s*[{(]|\bimport\s+.*from\s+['"]/, score: 0 },
+
+    // Java
+    { lang: 'java', regex: /\bpublic\s+(class|static|void)|System\.out\.print|@Override/, score: 0 },
+
+    // C/C++
+    { lang: 'cpp', regex: /#include\s*<|std::|cout\s*<<|namespace\s+\w+/, score: 0 },
+    { lang: 'c', regex: /#include\s*<\w+\.h>|int\s+main\s*\(|\bprintf\s*\(/, score: 0 },
+
+    // C#
+    { lang: 'csharp', regex: /\busing\s+System|namespace\s+\w+|Console\.Write/, score: 0 },
+
+    // Go
+    { lang: 'go', regex: /^package\s+\w+|func\s+\w+\(.*\)|go\s+func\(/, score: 0 },
+
+    // Rust
+    { lang: 'rust', regex: /fn\s+\w+\(|let\s+mut\s+\w+|\bimpl\s+\w+|\buse\s+\w+::/, score: 0 },
+
+    // Ruby
+    { lang: 'ruby', regex: /\bdef\s+\w+|\bend\b|\brequire\s+['"]/, score: 0 },
+
+    // PHP
+    { lang: 'php', regex: /<\?php|\$\w+\s*=|echo\s+\$/, score: 0 },
+
+    // SQL
+    { lang: 'sql', regex: /\b(SELECT|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP)\s+/i, score: 0 },
+  ];
+
+  // Score each pattern
+  for (const pattern of patterns) {
+    if (pattern.regex.test(content)) {
+      pattern.score++;
+    }
+  }
+
+  // Return language with highest score
+  const detected = patterns
+    .filter(p => p.score > 0)
+    .sort((a, b) => b.score - a.score)[0];
+
+  return detected ? detected.lang : null;
+}
+
+/**
  * Get or create conversation history for a channel
  */
 function getHistory(channelId) {
