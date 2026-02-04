@@ -174,17 +174,16 @@ async function sendSpamAlert(message) {
 
 // Bot ready
 client.once('ready', () => {
-  console.log(`✅ ${client.user.tag} is online!`);
-  console.log(`📡 Serving ${client.guilds.cache.size} server(s)`);
-  
+  info('Bot is online', { tag: client.user.tag, guilds: client.guilds.cache.size });
+
   if (config.welcome?.enabled) {
-    console.log(`👋 Welcome messages → #${config.welcome.channelId}`);
+    info('Welcome messages enabled', { channelId: config.welcome.channelId });
   }
   if (config.ai?.enabled) {
-    console.log(`🤖 AI chat enabled (${config.ai.model || 'claude-sonnet-4-20250514'})`);
+    info('AI chat enabled', { model: config.ai.model || 'claude-sonnet-4-20250514' });
   }
   if (config.moderation?.enabled) {
-    console.log(`🛡️ Moderation enabled`);
+    info('Moderation enabled');
   }
 });
 
