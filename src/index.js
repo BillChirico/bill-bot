@@ -51,6 +51,9 @@ const client = new Client({
 const conversationHistory = new Map();
 const MAX_HISTORY = 20;
 
+// Track pending AI requests for graceful shutdown
+const pendingRequests = new Set();
+
 // Spam patterns
 const SPAM_PATTERNS = [
   /free\s*(crypto|bitcoin|btc|eth|nft)/i,
@@ -133,49 +136,58 @@ function loadState() {
  * Generate AI response using OpenClaw's chat completions endpoint
  */
 async function generateResponse(channelId, userMessage, username) {
-  const history = getHistory(channelId);
-  
-  const systemPrompt = config.ai?.systemPrompt || `You are Volvox Bot, a helpful and friendly Discord bot for the Volvox developer community. 
+  // Track this request for graceful shutdown
+  const requestId = Symbol('request');
+  pendingRequests.add(requestId);
+
+  try {
+    const history = getHistory(channelId);
+
+    const systemPrompt = config.ai?.systemPrompt || `You are Volvox Bot, a helpful and friendly Discord bot for the Volvox developer community.
 You're witty, knowledgeable about programming and tech, and always eager to help.
 Keep responses concise and Discord-friendly (under 2000 chars).
 You can use Discord markdown formatting.`;
 
-  // Build messages array for OpenAI-compatible API
-  const messages = [
-    { role: 'system', content: systemPrompt },
-    ...history,
-    { role: 'user', content: `${username}: ${userMessage}` }
-  ];
+    // Build messages array for OpenAI-compatible API
+    const messages = [
+      { role: 'system', content: systemPrompt },
+      ...history,
+      { role: 'user', content: `${username}: ${userMessage}` }
+    ];
 
-  try {
-    const response = await fetch(OPENCLAW_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(OPENCLAW_TOKEN && { 'Authorization': `Bearer ${OPENCLAW_TOKEN}` })
-      },
-      body: JSON.stringify({
-        model: config.ai?.model || 'claude-sonnet-4-20250514',
-        max_tokens: config.ai?.maxTokens || 1024,
-        messages: messages,
-      }),
-    });
+    try {
+      const response = await fetch(OPENCLAW_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(OPENCLAW_TOKEN && { 'Authorization': `Bearer ${OPENCLAW_TOKEN}` })
+        },
+        body: JSON.stringify({
+          model: config.ai?.model || 'claude-sonnet-4-20250514',
+          max_tokens: config.ai?.maxTokens || 1024,
+          messages: messages,
+        }),
+      });
 
-    if (!response.ok) {
-      throw new Error(`API error: ${response.status} ${response.statusText}`);
+      if (!response.ok) {
+        throw new Error(`API error: ${response.status} ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      const reply = data.choices?.[0]?.message?.content || "I got nothing. Try again?";
+
+      // Update history
+      addToHistory(channelId, 'user', `${username}: ${userMessage}`);
+      addToHistory(channelId, 'assistant', reply);
+
+      return reply;
+    } catch (err) {
+      console.error('OpenClaw API error:', err.message);
+      return "Sorry, I'm having trouble thinking right now. Try again in a moment!";
     }
-
-    const data = await response.json();
-    const reply = data.choices?.[0]?.message?.content || "I got nothing. Try again?";
-    
-    // Update history
-    addToHistory(channelId, 'user', `${username}: ${userMessage}`);
-    addToHistory(channelId, 'assistant', reply);
-    
-    return reply;
-  } catch (err) {
-    console.error('OpenClaw API error:', err.message);
-    return "Sorry, I'm having trouble thinking right now. Try again in a moment!";
+  } finally {
+    // Remove request from tracking
+    pendingRequests.delete(requestId);
   }
 }
 
