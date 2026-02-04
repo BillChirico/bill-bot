@@ -5,6 +5,8 @@
  * for multiple backends (SQLite, JSON files).
  */
 
+import Database from 'better-sqlite3';
+
 /**
  * Base Storage class - defines the interface all storage backends must implement
  */
@@ -91,6 +93,83 @@ export class MemoryStorage extends Storage {
 }
 
 /**
+ * SQLite Storage - persistent storage using SQLite database
+ * Messages are stored in a single table indexed by channel_id
+ */
+export class SQLiteStorage extends Storage {
+  /**
+   * Create SQLite storage instance
+   * @param {string} dbPath - Path to SQLite database file
+   */
+  constructor(dbPath = './data/conversations.db') {
+    super();
+    this.db = new Database(dbPath);
+    this.db.pragma('journal_mode = WAL'); // Better concurrency
+    this._initDatabase();
+  }
+
+  /**
+   * Initialize database schema
+   * @private
+   */
+  _initDatabase() {
+    // Create messages table with indexes
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS messages (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        channel_id TEXT NOT NULL,
+        role TEXT NOT NULL,
+        content TEXT NOT NULL,
+        timestamp INTEGER NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_channel_id ON messages(channel_id);
+      CREATE INDEX IF NOT EXISTS idx_timestamp ON messages(timestamp);
+      CREATE INDEX IF NOT EXISTS idx_channel_timestamp ON messages(channel_id, timestamp);
+    `);
+  }
+
+  async getHistory(channelId, limit = 20) {
+    const stmt = this.db.prepare(`
+      SELECT role, content, timestamp
+      FROM messages
+      WHERE channel_id = ?
+      ORDER BY timestamp DESC
+      LIMIT ?
+    `);
+
+    const rows = stmt.all(channelId, limit);
+    // Reverse to get chronological order (oldest first)
+    return rows.reverse();
+  }
+
+  async addMessage(channelId, role, content) {
+    const stmt = this.db.prepare(`
+      INSERT INTO messages (channel_id, role, content, timestamp)
+      VALUES (?, ?, ?, ?)
+    `);
+
+    stmt.run(channelId, role, content, Date.now());
+  }
+
+  async pruneOldMessages(daysOld) {
+    const cutoff = Date.now() - (daysOld * 24 * 60 * 60 * 1000);
+
+    const stmt = this.db.prepare(`
+      DELETE FROM messages
+      WHERE timestamp < ?
+    `);
+
+    const result = stmt.run(cutoff);
+    return result.changes;
+  }
+
+  async close() {
+    this.db.close();
+  }
+}
+
+/**
  * Storage Factory - creates appropriate storage backend based on configuration
  */
 export class StorageFactory {
@@ -106,8 +185,7 @@ export class StorageFactory {
         return new MemoryStorage();
 
       case 'sqlite':
-        // SQLite backend will be implemented in next subtask
-        throw new Error('SQLite storage not yet implemented');
+        return new SQLiteStorage(options.path || './data/conversations.db');
 
       case 'json':
         // JSON backend will be implemented in subtask after SQLite

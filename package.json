@@ -10,6 +10,7 @@
     "dev": "node --watch src/index.js"
   },
   "dependencies": {
+    "better-sqlite3": "^11.8.1",
     "discord.js": "^14.25.1",
     "dotenv": "^17.2.3"
   },
