@@ -46,9 +46,18 @@ const client = new Client({
   ],
 });
 
-// Conversation history per user (simple in-memory store)
+// Conversation history (simple in-memory store)
+// Storage key depends on config.ai.historyMode: 'user' (per-user) or 'channel' (per-channel)
 const conversationHistory = new Map();
 const MAX_HISTORY = 20;
+
+/**
+ * Get history key based on config mode
+ */
+function getHistoryKey(message) {
+  const mode = config.ai?.historyMode || 'user';
+  return mode === 'channel' ? message.channel.id : message.author.id;
+}
 
 // Spam patterns
 const SPAM_PATTERNS = [
@@ -71,20 +80,20 @@ function isSpam(content) {
 }
 
 /**
- * Get or create conversation history for a user
+ * Get or create conversation history for a key (userId or channelId)
  */
-function getHistory(userId) {
-  if (!conversationHistory.has(userId)) {
-    conversationHistory.set(userId, []);
+function getHistory(key) {
+  if (!conversationHistory.has(key)) {
+    conversationHistory.set(key, []);
   }
-  return conversationHistory.get(userId);
+  return conversationHistory.get(key);
 }
 
 /**
  * Add message to history
  */
-function addToHistory(userId, role, content) {
-  const history = getHistory(userId);
+function addToHistory(key, role, content) {
+  const history = getHistory(key);
   history.push({ role, content });
 
   // Trim old messages
@@ -96,10 +105,10 @@ function addToHistory(userId, role, content) {
 /**
  * Generate AI response using OpenClaw's chat completions endpoint
  */
-async function generateResponse(userId, userMessage, username) {
-  const history = getHistory(userId);
-  
-  const systemPrompt = config.ai?.systemPrompt || `You are Volvox Bot, a helpful and friendly Discord bot for the Volvox developer community. 
+async function generateResponse(key, userMessage, username) {
+  const history = getHistory(key);
+
+  const systemPrompt = config.ai?.systemPrompt || `You are Volvox Bot, a helpful and friendly Discord bot for the Volvox developer community.
 You're witty, knowledgeable about programming and tech, and always eager to help.
 Keep responses concise and Discord-friendly (under 2000 chars).
 You can use Discord markdown formatting.`;
@@ -133,8 +142,8 @@ You can use Discord markdown formatting.`;
     const reply = data.choices?.[0]?.message?.content || "I got nothing. Try again?";
 
     // Update history
-    addToHistory(userId, 'user', `${username}: ${userMessage}`);
-    addToHistory(userId, 'assistant', reply);
+    addToHistory(key, 'user', `${username}: ${userMessage}`);
+    addToHistory(key, 'assistant', reply);
 
     return reply;
   } catch (err) {
@@ -180,7 +189,9 @@ client.once('ready', () => {
     console.log(`👋 Welcome messages → #${config.welcome.channelId}`);
   }
   if (config.ai?.enabled) {
+    const historyMode = config.ai?.historyMode || 'user';
     console.log(`🤖 AI chat enabled (${config.ai.model || 'claude-sonnet-4-20250514'})`);
+    console.log(`💾 History mode: ${historyMode}`);
   }
   if (config.moderation?.enabled) {
     console.log(`🛡️ Moderation enabled`);
@@ -223,8 +234,13 @@ client.on('messageCreate', async (message) => {
 
   // /clear command - reset conversation history
   if (message.content.trim().toLowerCase() === '/clear') {
-    conversationHistory.delete(message.author.id);
-    await message.reply('✅ Your conversation history has been cleared! Starting fresh.');
+    const key = getHistoryKey(message);
+    conversationHistory.delete(key);
+    const mode = config.ai?.historyMode || 'user';
+    const confirmMsg = mode === 'channel'
+      ? '✅ This channel\'s conversation history has been cleared! Starting fresh.'
+      : '✅ Your conversation history has been cleared! Starting fresh.';
+    await message.reply(confirmMsg);
     return;
   }
 
@@ -250,8 +266,9 @@ client.on('messageCreate', async (message) => {
 
       await message.channel.sendTyping();
 
+      const key = getHistoryKey(message);
       const response = await generateResponse(
-        message.author.id,
+        key,
         cleanContent,
         message.author.username
       );
